@@ -1,0 +1,114 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+model User {
+  id               String           @id @default(auto()) @map("_id") @db.ObjectId
+  email            String           @unique
+  name             String?
+  image            String?
+  plan             Plan             @default(FREE)
+  stripeCustomerId String?          @unique
+  linkedinUrl      String?
+  usageQuota       Json             @default("{\"scansUsed\": 0, \"scansLimit\": 3, \"jdMatchesUsed\": 0, \"jdMatchesLimit\": 1}")
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  accounts         Account[]
+  sessions         Session[]
+  resumes          Resume[]
+  jobDescriptions  JobDescription[]
+  analysisReports  AnalysisReport[]
+}
+
+model Resume {
+  id           String           @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String
+  title        String           @default("Untitled Resume")
+  templateId   String           @default("modern")
+  content      Json
+  version      Int              @default(1)
+  pdfUrl       String?
+  lastAtsScore Float?
+  isDefault    Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  user         User             @relation(fields: [userId], references: [id])
+  analyses     AnalysisReport[]
+
+  @@index([userId])
+}
+
+model JobDescription {
+  id             String           @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String
+  title          String?
+  company        String?
+  rawText        String
+  parsedData     Json?
+  embeddingId    String?
+  requiredSkills String[]
+  niceToHave     String[]
+  createdAt      DateTime         @default(now())
+  user           User             @relation(fields: [userId], references: [id])
+  matches        AnalysisReport[]
+
+  @@index([userId])
+}
+
+model AnalysisReport {
+  id             String          @id @default(auto()) @map("_id") @db.ObjectId
+  resumeId       String
+  userId         String
+  jdId           String?
+  atsScore       Float
+  sectionScores  Json
+  keywordGaps    String[]
+  suggestions    Json
+  matchScore     Float?
+  matchDetails   Json?
+  processingTime Int?
+  createdAt      DateTime        @default(now())
+  user           User            @relation(fields: [userId], references: [id])
+  resume         Resume          @relation(fields: [resumeId], references: [id])
+  jobDescription JobDescription? @relation(fields: [jdId], references: [id])
+
+  @@index([userId])
+  @@index([resumeId])
+}
+
+model Account {
+  id                String @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  user              User   @relation(fields: [userId], references: [id])
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id])
+}
+
