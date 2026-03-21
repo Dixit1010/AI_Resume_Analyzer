@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 import { prisma } from "@/lib/db/prisma";
 import { JDMatchResult } from "@/types";
-import { flashModel } from "./gemini";
+import { getFlashModel } from "./gemini";
 
 const EMBEDDING_MODEL = "text-embedding-3-large";
 
@@ -54,19 +54,42 @@ function stringSimilarity(a: string, b: string): number {
   return match / longerLength;
 }
 
-async function parseJDWithAI(jdText: string) {
-  const result = await flashModel.generateContent(`${JD_PARSE_PROMPT}\n\nJD:\n${jdText}`);
-  const text = result.response.text();
-  return JSON.parse(text) as {
-    title: string | null;
-    company: string | null;
-    requiredSkills: string[];
-    niceToHaveSkills: string[];
-    responsibilities: string[];
-    experienceLevel: "entry" | "mid" | "senior" | "executive" | null;
-    educationRequired: string | null;
-    salaryRange: string | null;
+type JDParsed = {
+  title: string | null;
+  company: string | null;
+  requiredSkills: string[];
+  niceToHaveSkills: string[];
+  responsibilities: string[];
+  experienceLevel: "entry" | "mid" | "senior" | "executive" | null;
+  educationRequired: string | null;
+  salaryRange: string | null;
+};
+
+function emptyJDParsed(): JDParsed {
+  return {
+    title: null,
+    company: null,
+    requiredSkills: [],
+    niceToHaveSkills: [],
+    responsibilities: [],
+    experienceLevel: null,
+    educationRequired: null,
+    salaryRange: null,
   };
+}
+
+async function parseJDWithAI(jdText: string): Promise<JDParsed> {
+  const model = getFlashModel();
+  if (!model) {
+    return emptyJDParsed();
+  }
+  try {
+    const result = await model.generateContent(`${JD_PARSE_PROMPT}\n\nJD:\n${jdText}`);
+    const text = result.response.text();
+    return JSON.parse(text) as JDParsed;
+  } catch {
+    return emptyJDParsed();
+  }
 }
 
 async function embed(texts: string[]): Promise<number[][]> {
@@ -196,11 +219,19 @@ export async function matchResumeToJD(
     responsibilities: jdParsed.responsibilities ?? [],
   });
 
-  const rewriteResult = await flashModel.generateContent(
-    `${REWRITE_PROMPT}\n\nINPUT:\n${rewriteInput}`,
-  );
-  const rewriteText = rewriteResult.response.text();
-  const rewrites = JSON.parse(rewriteText) as JDMatchResult["rewrites"];
+  let rewrites: JDMatchResult["rewrites"] = [];
+  const rewriteModel = getFlashModel();
+  if (rewriteModel) {
+    try {
+      const rewriteResult = await rewriteModel.generateContent(
+        `${REWRITE_PROMPT}\n\nINPUT:\n${rewriteInput}`,
+      );
+      const rewriteText = rewriteResult.response.text();
+      rewrites = JSON.parse(rewriteText) as JDMatchResult["rewrites"];
+    } catch {
+      rewrites = [];
+    }
+  }
 
   const result: JDMatchResult = {
     matchScore: Math.round(matchScore),

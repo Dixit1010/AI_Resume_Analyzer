@@ -1,6 +1,4 @@
-import pdfParse from "pdf-parse";
-import mammoth from "mammoth";
-import { flashModel } from "./gemini";
+import { getFlashModel } from "./gemini";
 import { ATSScore, Suggestion } from "@/types";
 
 export interface AnalyzeOptions {
@@ -110,6 +108,7 @@ async function stage1Parse(
   const warnings: string[] = [];
 
   if (options.fileType === "pdf" && input instanceof Buffer) {
+    const pdfParse = (await import("pdf-parse")).default as any;
     const result = await pdfParse(input);
     const text = result.text ?? "";
     if (result.metadata?.has("Table")) {
@@ -119,7 +118,10 @@ async function stage1Parse(
   }
 
   if (options.fileType === "docx" && input instanceof Buffer) {
-    const result = await mammoth.extractRawText({ buffer: input });
+    const mammoth = await import("mammoth");
+    const result = await ((mammoth as any).default ?? mammoth).extractRawText({
+      buffer: input,
+    });
     const text = result.value ?? "";
     if (result.messages.length > 0) {
       warnings.push(
@@ -135,24 +137,36 @@ async function stage1Parse(
   };
 }
 
+const EMPTY_STRUCTURE: StructureExtractionResult = {
+  contact: null,
+  summary: null,
+  experience: null,
+  skills: null,
+  education: null,
+  certifications: null,
+};
+
 async function stage2StructureExtraction(rawText: string): Promise<StructureExtractionResult> {
-  const result = await flashModel.generateContent(
-    `${STRUCTURE_PROMPT}\n\nResume text:\n\n${rawText}`,
-  );
-  const text = result.response.text();
+  const model = getFlashModel();
+  if (!model) {
+    return EMPTY_STRUCTURE;
+  }
 
   try {
-    const parsed = JSON.parse(text) as StructureExtractionResult;
-    return parsed;
+    const result = await model.generateContent(
+      `${STRUCTURE_PROMPT}\n\nResume text:\n\n${rawText}`,
+    );
+    const text = result.response.text();
+
+    try {
+      const parsed = JSON.parse(text) as StructureExtractionResult;
+      return parsed;
+    } catch {
+      return EMPTY_STRUCTURE;
+    }
   } catch {
-    return {
-      contact: null,
-      summary: null,
-      experience: null,
-      skills: null,
-      education: null,
-      certifications: null,
-    };
+    // Invalid API key, quota, network, or non-JSON response from API
+    return EMPTY_STRUCTURE;
   }
 }
 
@@ -306,14 +320,22 @@ async function stage6SuggestionGeneration(
 
   const promptIssues = JSON.stringify({ issues, resume: rawText });
 
-  const result = await flashModel.generateContent(
-    `${SUGGESTION_BATCH_PROMPT}\n\nINPUT:\n${promptIssues}`,
-  );
-  const text = result.response.text();
+  const model = getFlashModel();
+  if (!model) {
+    return { suggestions: [] };
+  }
 
   let parsed: Suggestion[] = [];
   try {
-    parsed = JSON.parse(text) as Suggestion[];
+    const result = await model.generateContent(
+      `${SUGGESTION_BATCH_PROMPT}\n\nINPUT:\n${promptIssues}`,
+    );
+    const text = result.response.text();
+    try {
+      parsed = JSON.parse(text) as Suggestion[];
+    } catch {
+      parsed = [];
+    }
   } catch {
     parsed = [];
   }
